@@ -91,18 +91,18 @@ class MockProvider:
         payload = {
             "modules": [
                 {
-                    "name": "auth",
-                    "kind": "auth",
-                    "description": "User authentication module",
-                    "depends_on": [],
-                    "acceptance_criteria": ["Password hashing", "Token issuance"],
-                },
-                {
                     "name": "database",
                     "kind": "database",
                     "description": "Persistence layer",
                     "depends_on": [],
                     "acceptance_criteria": ["Schema defined", "Migrations"],
+                },
+                {
+                    "name": "auth",
+                    "kind": "auth",
+                    "description": "User authentication module",
+                    "depends_on": ["database"],
+                    "acceptance_criteria": ["Password hashing", "Token issuance"],
                 },
                 {
                     "name": "api",

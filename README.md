@@ -40,8 +40,17 @@ success criteria.
 The master planner. Uses **chain-of-thought reasoning** before assigning
 work, then breaks the project into modules (`auth`, `database`, `api`,
 `frontend`, `security`, `tests`, `docs`, `infra`, …). Each module is
-assigned to a set of sub-agents and placed into a dependency graph that is
-executed in parallel waves.
+assigned to a set of sub-agents.
+
+Execution is driven by a **LangGraph `StateGraph`** built in
+[`agentforge.orchestrator.graph`](agentforge/orchestrator/graph.py): one
+node per module, module dependencies become graph edges, and LangGraph's
+pregel runtime fans out independent modules in parallel while merging
+their artifacts via an `operator.add` reducer on the shared state. Each
+node is idempotent and gated on its dependencies, so multi-dependency
+modules run exactly once, after all their predecessors have completed.
+A legacy `ThreadPoolExecutor`-over-topological-waves driver remains as a
+fallback and can be forced with `AGENTFORGE_ORCHESTRATOR=waves`.
 
 ### Stage 3 — Sub-Agent Pool (`agentforge.agents`)
 Every agent is a stateless function — all state lives in

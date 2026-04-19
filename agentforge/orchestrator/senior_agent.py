@@ -16,6 +16,7 @@ round results, audit trail) lives in :class:`SharedContext`.
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from graphlib import CycleError, TopologicalSorter
 
@@ -28,6 +29,7 @@ from agentforge.agents import (
 from agentforge.logging import get_logger, log_event
 from agentforge.memory import SharedContext
 from agentforge.models import EngineeringSpec, ModuleArtifact, ModuleSpec
+from agentforge.orchestrator import graph as _langgraph
 from agentforge.providers import Message, extract_json, get_provider
 
 logger = get_logger("senior_agent")
@@ -201,7 +203,59 @@ class SeniorAgent:
         *,
         max_workers: int = 8,
     ) -> list[ModuleArtifact]:
-        """Run sub-agents for every module respecting dependency order."""
+        """Run sub-agents for every module respecting dependency order.
+
+        The default driver is a LangGraph ``StateGraph`` (see
+        :mod:`agentforge.orchestrator.graph`). Parallel fan-out of modules
+        whose dependencies have resolved is handled by LangGraph's pregel
+        runtime and artifacts are merged via an ``operator.add`` reducer on
+        the shared state.
+
+        The legacy ``ThreadPoolExecutor``-over-topological-waves driver is
+        kept as a fallback for environments without LangGraph available
+        (and can be forced with ``AGENTFORGE_ORCHESTRATOR=waves``).
+        """
+
+        driver = os.environ.get("AGENTFORGE_ORCHESTRATOR", "langgraph").lower()
+        if driver == "langgraph":
+            try:
+                log_event(logger, "execute.start", driver="langgraph")
+                self.context.audit(
+                    "senior_agent",
+                    "execute.start",
+                    {"driver": "langgraph", "modules": [m.name for m in modules]},
+                )
+                artifacts = _langgraph.run_graph(
+                    spec, modules, self._build_module, self.context
+                )
+                self.context.put("artifacts", artifacts)
+                self.context.audit(
+                    "senior_agent",
+                    "execute.done",
+                    {"driver": "langgraph", "artifact_count": len(artifacts)},
+                )
+                return artifacts
+            except Exception as exc:  # pragma: no cover - fallback path
+                logger.warning(
+                    "LangGraph execution failed (%s); falling back to waves driver",
+                    exc,
+                )
+                self.context.audit(
+                    "senior_agent",
+                    "execute.fallback",
+                    {"error": str(exc)},
+                )
+
+        return self._execute_waves(spec, modules, max_workers=max_workers)
+
+    def _execute_waves(
+        self,
+        spec: EngineeringSpec,
+        modules: list[ModuleSpec],
+        *,
+        max_workers: int = 8,
+    ) -> list[ModuleArtifact]:
+        """Legacy driver: ThreadPoolExecutor over topological waves."""
 
         waves = self._dependency_order(modules)
         module_by_name = {m.name: m for m in modules}
@@ -237,7 +291,7 @@ class SeniorAgent:
         self.context.audit(
             "senior_agent",
             "execute.done",
-            {"artifact_count": len(artifacts)},
+            {"driver": "waves", "artifact_count": len(artifacts)},
         )
         return artifacts
 
